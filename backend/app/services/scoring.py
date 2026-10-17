@@ -6,12 +6,35 @@ mutable score counters are maintained.
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+import re
+from typing import Any, Callable
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
+from app.db.models import League, Match, MatchEvent
 from app.db.repositories import MatchEventRepository, SportConfigRepository
+from app.core.signing import canonical_json_equal, sign_record
+
+logger = logging.getLogger(__name__)
+_listeners: list[Callable[[str, str], Any]] = []
+
+
+def register_match_listener(fn: Callable[[str, str], Any]) -> None:
+    if fn not in _listeners:
+        _listeners.append(fn)
+
+
+def notify_match_changed(match_id: str, event_type: str) -> None:
+    for fn in tuple(_listeners):
+        try:
+            fn(match_id, event_type)
+        except Exception:
+            logger.exception("match listener failed")
 
 
 def _compensation_index(events: list[dict[str, Any]]) -> dict[str, str]:
@@ -240,3 +263,149 @@ def get_score_projection(session: Session, match_id: str) -> dict[str, Any]:
             message="Sport not found.",
         )
     return project_match(sport_config, match, match_repository.list(match_id))
+
+
+def _bad(fields: list[str]) -> ApiError:
+    return ApiError(400, "VALIDATION_ERROR", "Request validation failed.", {"fields": fields})
+
+
+_EVENT_TYPES = {
+    "match_init": {"sport_id", "home_team_id", "away_team_id"},
+    "match_start": set(),
+    "score": {"team_id", "event_type"},
+    "discipline": {"team_id", "points"},
+    "tiebreak_winner": {"team_id"},
+    "match_end": set(),
+    "compensation": {"compensates", "reason"},
+}
+
+
+def _validate_request(request: Any) -> dict[str, Any]:
+    if not isinstance(request, dict):
+        raise _bad(["body"])
+    fields: list[str] = []
+    for name in ("event_id", "match_id", "type", "payload"):
+        if name not in request:
+            fields.append(name)
+    if not isinstance(request.get("event_id"), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", str(request.get("event_id", ""))):
+        fields.append("event_id")
+    if not isinstance(request.get("match_id"), str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", str(request.get("match_id", ""))):
+        fields.append("match_id")
+    typ = request.get("type")
+    if not isinstance(typ, str) or typ not in _EVENT_TYPES:
+        fields.append("type")
+    payload = request.get("payload")
+    if not isinstance(payload, dict):
+        fields.append("payload")
+    else:
+        expected = _EVENT_TYPES.get(typ, set())
+        if set(payload) != expected:
+            optional = {"league_id"} if typ == "match_init" else set()
+            fields.extend(["payload." + k for k in sorted((set(payload) ^ expected) - optional)])
+        for key in expected & set(payload):
+            value = payload[key]
+            if key in {"sport_id", "home_team_id", "away_team_id", "league_id", "team_id", "event_type", "compensates"}:
+                if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", value):
+                    fields.append("payload." + key)
+            elif key == "reason" and not isinstance(value, str):
+                fields.append("payload.reason")
+            elif key == "points" and (isinstance(value, bool) or not isinstance(value, int)):
+                fields.append("payload.points")
+    if fields:
+        raise _bad(fields)
+    return request
+
+
+class ScoreService:
+    def append_event(self, session: Session, request: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        request = _validate_request(request)
+        event_id, match_id, typ, payload = (request["event_id"], request["match_id"], request["type"], request["payload"])
+        prior = session.query(MatchEvent).filter(MatchEvent.event_id == event_id).first()
+        if prior is not None:
+            if canonical_json_equal(prior.request_body, request):
+                return 200, dict(prior.response)
+            raise ApiError(409, "DUPLICATE_EVENT_ID", "Event ID already exists.")
+
+        match = session.query(Match).filter(Match.match_id == match_id).with_for_update().first()
+        sport = None
+        if typ == "match_init":
+            sport = SportConfigRepository(session).get(payload["sport_id"])
+            if sport is None:
+                raise ApiError(404, "SPORT_NOT_FOUND", "Sport not found.")
+            if payload.get("league_id") is not None and session.query(League).filter(League.league_id == payload["league_id"]).first() is None:
+                raise ApiError(404, "LEAGUE_NOT_FOUND", "League not found.")
+            if match is not None:
+                raise ApiError(409, "MATCH_EXISTS", "Match already exists.")
+            if payload["home_team_id"] == payload["away_team_id"]:
+                raise _bad(["payload.home_team_id", "payload.away_team_id"])
+            match = Match(match_id=match_id, sport_id=payload["sport_id"], league_id=payload.get("league_id"),
+                          home_team_id=payload["home_team_id"], away_team_id=payload["away_team_id"])
+            session.add(match)
+            session.flush()
+            events: list[dict[str, Any]] = []
+        else:
+            if match is None:
+                raise ApiError(404, "MATCH_NOT_FOUND", "Match not found.")
+            sport = SportConfigRepository(session).get(match.sport_id)
+            events = MatchEventRepository(session).list(match_id)
+
+        if typ != "match_init":
+            if typ in {"score", "discipline", "tiebreak_winner"} and payload["team_id"] not in {match.home_team_id, match.away_team_id}:  # type: ignore[union-attr]
+                raise ApiError(400, "INVALID_TEAM", "Team is not part of the match.")
+            if typ == "score" and payload["event_type"] not in sport.get("scoring_events", {}):  # type: ignore[union-attr]
+                raise ApiError(400, "UNKNOWN_EVENT_TYPE", "Unknown scoring event type.")
+            status = derive_status(events)
+            if typ == "match_start" and status != "upcoming":
+                raise ApiError(409, "ILLEGAL_TRANSITION", "Match cannot start from its current status.")
+            if typ == "match_end":
+                if status != "in_progress":
+                    raise ApiError(409, "ILLEGAL_TRANSITION", "Match cannot end from its current status.")
+                h = team_totals(sport, events, match.home_team_id)  # type: ignore[union-attr]
+                a = team_totals(sport, events, match.away_team_id)  # type: ignore[union-attr]
+                if h["score"] == a["score"] and not sport.get("draw_allowed") and _tiebreak_winner(events, match.home_team_id, match.away_team_id) is None:  # type: ignore[union-attr]
+                    raise ApiError(409, "TIE_NOT_ALLOWED", "A tied match requires a tiebreak winner.")
+            if typ in {"score", "discipline", "tiebreak_winner"} and status != "in_progress":
+                raise ApiError(409, "MATCH_NOT_IN_PROGRESS", "Match is not in progress.")
+            if typ == "score":
+                definition = sport.get("scoring_events", {}).get(payload["event_type"])  # type: ignore[union-attr]
+                totals = team_totals(sport, events, payload["team_id"])  # type: ignore[arg-type]
+                periods = sport.get("periods", {})
+                if sport.get("scoring_model") == "innings" and (
+                    totals["balls"] >= periods.get("innings_per_team", 1) * periods.get("overs_per_innings", 0) * periods.get("balls_per_over", 0)
+                    or totals["wickets"] >= periods.get("innings_per_team", 1) * periods.get("wickets_per_innings", 0)
+                ):
+                    raise ApiError(409, "INNINGS_COMPLETE", "The innings is complete.")
+                if sport.get("scoring_model") == "round" and any(
+                    team_totals(sport, events, team_id)["rounds"]
+                    >= (periods.get("best_of", 1) + 1) // 2
+                    for team_id in (match.home_team_id, match.away_team_id)
+                ):
+                    raise ApiError(409, "SERIES_ALREADY_DECIDED", "The series is already decided.")
+            if typ == "compensation":
+                target_row = session.query(MatchEvent).filter(MatchEvent.event_id == payload["compensates"]).first()
+                target = next((e for e in events if e["event_id"] == payload["compensates"]), None)
+                if target_row is not None and target_row.match_id != match_id:
+                    raise ApiError(409, "INVALID_COMPENSATION", "Event cannot be compensated.")
+                if target is None:
+                    raise ApiError(404, "EVENT_NOT_FOUND", "Event not found.")
+                if target["type"] not in {"score", "discipline", "tiebreak_winner"} or payload["compensates"] in _compensation_index(events):
+                    raise ApiError(409, "INVALID_COMPENSATION", "Event cannot be compensated.")
+
+        sequence = len(events) + 1
+        signature = sign_record(event_id, payload)
+        response = {"event_id": event_id, "match_id": match_id, "type": typ, "sequence": sequence,
+                    "match_version": sequence, "signature": signature}
+        session.add(MatchEvent(event_id=event_id, match_id=match_id, sequence=sequence, type=typ,
+                               payload=payload, request_body=request, response=response, signature=signature))
+        try:
+            session.flush()
+        except IntegrityError:
+            session.rollback()
+            prior = session.query(MatchEvent).filter(MatchEvent.event_id == event_id).first()
+            if prior and canonical_json_equal(prior.request_body, request):
+                return 200, dict(prior.response)
+            raise ApiError(409, "DUPLICATE_EVENT_ID", "Event ID already exists.")
+        return 201, response
+
+
+score_service = ScoreService()
