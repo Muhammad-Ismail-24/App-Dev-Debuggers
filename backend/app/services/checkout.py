@@ -165,7 +165,7 @@ def _validation(request: object) -> dict:
     else:
         seen = set()
         for i, item in enumerate(items):
-            if not isinstance(item, dict) or set(item) != {"variant_id", "quantity"}:
+            if not isinstance(item, dict) or not {"variant_id", "quantity"} <= set(item):
                 fields.append(f"items[{i}]")
                 continue
             vid, qty = item["variant_id"], item["quantity"]
@@ -179,7 +179,7 @@ def _validation(request: object) -> dict:
     if request.get("discount_code") is not None and not isinstance(request.get("discount_code"), str):
         fields.append("discount_code")
     payment = request.get("payment")
-    if not isinstance(payment, dict) or set(payment) != {"token"} or not isinstance(payment.get("token"), str) or not payment.get("token"):
+    if not isinstance(payment, dict) or "token" not in payment or not isinstance(payment.get("token"), str) or not payment.get("token"):
         fields.append("payment")
     if fields:
         raise ApiError(400, "VALIDATION_ERROR", "Request validation failed.", {"fields": fields})
@@ -249,8 +249,19 @@ def checkout(session: Session, request: dict) -> tuple[int, dict]:
                       currency=CURRENCY, subtotal_minor=totals["subtotal_minor"], discount_minor=totals["discount_minor"],
                       total_minor=totals["total_minor"], discount_code=request.get("discount_code"),
                       request_body=request, response=response, authorization_id=auth, capture_id=capture)
-        session.add(order)
-        session.flush()
+        try:
+            session.add(order)
+            session.flush()
+        except IntegrityError:
+            # A concurrent request with the same order_id committed first: give back our reservation,
+            # then replay its stored result (identical body) or report the id clash (PDF 5.12).
+            session.rollback()
+            _release(session, reserved)
+            reserved.clear()  # already released; the generic handler below must not release twice
+            prior = session.query(Order).filter(Order.order_id == request["order_id"]).first()
+            if prior is not None and prior.status == "paid" and prior.request_body == request:
+                return 200, dict(prior.response)
+            raise ApiError(409, "DUPLICATE_ORDER_ID", "Order ID already exists.")
         for item in receipt_payload["items"]:
             session.add(OrderItem(order_id=order.order_id, variant_id=item["variant_id"],
                                   quantity=item["quantity"], unit_price_minor=item["unit_price_minor"]))

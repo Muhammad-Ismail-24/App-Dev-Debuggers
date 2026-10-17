@@ -158,7 +158,7 @@ def _event_projection(
         "type": event["type"],
         "payload": event["payload"],
         "signature": event["signature"],
-        "compensated": event_id in compensated or event["type"] == "compensation",
+        "compensated": event_id in compensated,
         "compensated_by": (
             compensated.get(event_id)
             if event["type"] != "compensation"
@@ -299,9 +299,8 @@ def _validate_request(request: Any) -> dict[str, Any]:
         fields.append("payload")
     else:
         expected = _EVENT_TYPES.get(typ, set())
-        if set(payload) != expected:
-            optional = {"league_id"} if typ == "match_init" else set()
-            fields.extend(["payload." + k for k in sorted((set(payload) ^ expected) - optional)])
+        optional = {"league_id"} if typ == "match_init" else set()
+        fields.extend(["payload." + k for k in sorted(expected - set(payload) - optional)])  # unknown keys are ignored (PDF 5.2)
         for key in expected & set(payload):
             value = payload[key]
             if key in {"sport_id", "home_team_id", "away_team_id", "league_id", "team_id", "event_type", "compensates"}:
@@ -351,7 +350,7 @@ class ScoreService:
 
         if typ != "match_init":
             if typ in {"score", "discipline", "tiebreak_winner"} and payload["team_id"] not in {match.home_team_id, match.away_team_id}:  # type: ignore[union-attr]
-                raise ApiError(400, "INVALID_TEAM", "Team is not part of the match.")
+                raise ApiError(400, "VALIDATION_ERROR", "Team is not part of the match.", {"fields": ["payload.team_id"]})
             if typ == "score" and payload["event_type"] not in sport.get("scoring_events", {}):  # type: ignore[union-attr]
                 raise ApiError(400, "UNKNOWN_EVENT_TYPE", "Unknown scoring event type.")
             status = derive_status(events)

@@ -9,7 +9,7 @@ router = APIRouter(tags=["events"])
 
 
 @router.post("/audit/v1/events", response_model=EventResponse)
-def append_event(payload: dict[str, Any] = Body(...), session: Session = Depends(get_session)) -> Any:
+def append_event(payload: dict[str, Any] = Body(...)) -> Any:
     created = False
     with session_scope() as tx:
         code, body = score_service.append_event(tx, payload)

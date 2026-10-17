@@ -160,7 +160,7 @@ async def _handle_http_exception(request: Request, exc: StarletteHTTPException) 
         code = "METHOD_NOT_ALLOWED"
         message = exc.detail if isinstance(exc.detail, str) else "Method not allowed."
     elif status == 401:
-        code = "UNAUTHORIZED"
+        code = "UNAUTHENTICATED"
         message = exc.detail if isinstance(exc.detail, str) else "Authentication required."
     elif status == 403:
         code = "FORBIDDEN"

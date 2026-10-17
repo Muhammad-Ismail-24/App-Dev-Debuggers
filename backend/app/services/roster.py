@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError, validation_error
@@ -779,8 +780,8 @@ class RosterService:
                     message=f"request_id '{request_id}' was already used with a different body.",
                     details={"request_id": request_id},
                 )
-            # Identical replay → return stored response
-            return existing_req.status_code, existing_req.response
+            # Identical replay → stored response with HTTP 200 (PDF 5.11)
+            return 200, existing_req.response
 
         # ── Rule 2: existence ─────────────────────────────────────────────
         rl = session.execute(
@@ -1055,14 +1056,30 @@ class RosterService:
 
         # ── Store for idempotency ──────────────────────────────────────────
         http_status = 201
-        session.add(
-            RosterRequest(
-                request_id=request_id,
-                request_body=request,
-                status_code=http_status,
-                response=body,
+        try:
+            session.add(
+                RosterRequest(
+                    request_id=request_id,
+                    request_body=request,
+                    status_code=http_status,
+                    response=body,
+                )
             )
-        )
+            session.flush()
+        except IntegrityError:
+            # Concurrent request with the same request_id won the race: discard this attempt's changes.
+            session.rollback()
+            prior = session.execute(
+                select(RosterRequest).where(RosterRequest.request_id == request_id)
+            ).scalar_one_or_none()
+            if prior is not None and prior.request_body == request:
+                return 200, prior.response
+            raise ApiError(
+                status_code=409,
+                code="DUPLICATE_REQUEST_ID",
+                message=f"request_id '{request_id}' was already used with a different body.",
+                details={"request_id": request_id},
+            )
 
         return http_status, body
 

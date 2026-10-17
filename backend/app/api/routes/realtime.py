@@ -45,7 +45,7 @@ async def ws_match_feed(websocket: WebSocket, match_id: str) -> None:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid match_id format.",
-                    "details": {"match_id": match_id},
+                    "details": {"fields": ["match_id"]},
                 }
             }
         )
