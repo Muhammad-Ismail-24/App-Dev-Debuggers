@@ -8,7 +8,18 @@ Uncomment each line as the respective route module is implemented and tested.
 
 from fastapi import APIRouter
 
-from app.api.routes import checkout, events, health, inventory, leagues, reset, roster, sports
+from app.api.routes import (
+    checkout,
+    events,
+    health,
+    inventory,
+    leagues,
+    offline_sync,
+    realtime,
+    reset,
+    roster,
+    sports,
+)
 
 api_router = APIRouter()
 
@@ -27,4 +38,5 @@ api_router.include_router(checkout.router)
 api_router.include_router(inventory.router)
 # api_router.include_router(rbac.router)       # Sufiyan
 # api_router.include_router(ping.router)       # Sufiyan
-# api_router.include_router(offline_sync.router)
+api_router.include_router(offline_sync.router)
+api_router.include_router(realtime.router)

@@ -4,6 +4,7 @@ Port: 8080 (set in docker-compose.yml / Uvicorn invocation; never 8000).
 Absolute import root: `app` (e.g. `from app.core.errors import ApiError`).
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
@@ -19,6 +20,11 @@ import app.core.errors
 from app.core.errors import register_exception_handlers
 from app.db.seed import is_seeded, seed_all
 from app.db.session import init_db, session_scope, wait_for_database
+from app.services.realtime import (
+    hub as realtime_hub,
+    on_match_event_committed,
+)
+from app.services.scoring import register_match_listener
 
 logger = logging.getLogger("app.main")
 logging.basicConfig(
@@ -120,9 +126,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.info("Database already seeded.")
 
+    # --------------------------------------------------------------------------
+    # Realtime WebSocket feed initialization (instructions.md §2.1)
+    # --------------------------------------------------------------------------
+    loop = asyncio.get_running_loop()
+    realtime_hub.set_loop(loop)
+    realtime_hub.start_heartbeat()
+    register_match_listener(on_match_event_committed)
+    logger.info("Realtime WebSocket hub initialized with match listener.")
+
     yield
 
     logger.info("Shutting down NaSCon '26 Backend API...")
+    realtime_hub.stop_heartbeat()
 
 
 app = FastAPI(
