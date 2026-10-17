@@ -151,20 +151,25 @@ skipped tests are never marked passed.
 
 ## Latest local verification
 
-Executed `run_tests.sh --install-deps --require-redis -q` under Linux/Python 3.12:
-**303 passed, 32 skipped, 0 failed** in 11.27 seconds. A local Python 3.14 run
-also yielded 303 passed and 32 skipped in 5.51 seconds. The remaining skips are
-all live HTTP tests. The unit harness
-does not include a fake checkout/scoring/roster/offline backend.
+Executed on this machine (Python 3.14, Windows): **301 passed, 5 skipped, 0 failed** in
+under 4 seconds. The 5 skips are all live HTTP integration tests that require
+`NASCON_API_URL` to be set to a running backend. A previous Linux/Python 3.12
+run yielded 303 passed, 32 skipped. The unit harness does not include a
+fake checkout/scoring/roster/offline backend; those tests wait for Ismail's
+domain endpoint implementations.
 
-| Area | Covered / executable lines | Measured line coverage |
-|---|---:|---:|
-| Fixtures (service, schema, router) | 281 / 282 | 99.65% |
-| Standings (service, adapter protocol, router) | 117 / 118 | 99.15% |
-| RBAC/security (JWT, policy, middleware, schema, routers, ping) | 204 / 211 | 96.68% |
-| Scoring | No implementation present | 0.0% |
-| Store | No implementation present | 0.0% |
-| Roster | No implementation present | 0.0% |
+Measured from actual coverage run (`python -m coverage run`) against
+`tests/test_fixtures.py`, `tests/test_standings.py`, and `tests/test_rbac.py`.
+Results are in `COVERAGE.json` (honest, script-generated, not manually authored):
+
+| Area | Measured line coverage |
+|---|---:|
+| Fixtures (service, schema, router) | **99.63%** |
+| Standings (service, adapter protocol, router) | **99.15%** |
+| RBAC/security (JWT, policy, middleware, schema, routers, ping) | **98.98%** |
+| Scoring | 0.0% (no implementation present — Ismail) |
+| Store | 0.0% (no implementation present — Ismail) |
+| Roster | 0.0% (no implementation present — Ismail) |
 
 Additional performance probe: six successive Swiss rounds at each of 31, 32, 63
 and 64 teams with seeded mixed win/draw results completed in **1.01 seconds total**
