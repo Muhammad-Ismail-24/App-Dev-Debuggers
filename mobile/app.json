@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "NaSCon 26",
+    "slug": "nascon26-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.appdevdebuggers.nascon26",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "scheme": "nascon26",
+    "plugins": [
+      "expo-sqlite",
+      "expo-font"
+    ]
+  }
+}

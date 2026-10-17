@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+const root = new URL('../src', import.meta.url).pathname.replace(/\/$/, '');
+const { devAuthAdapter } = await import(`${root}/auth/devAuthAdapter.ts`);
+const { quickActionsFor } = await import(`${root}/auth/roles.ts`);
+const { formatDayLabel, formatTime } = await import(`${root}/utils/dateFormat.ts`);
+const { clubColor } = await import(`${root}/theme/clubColor.ts`);
+const { authErrorMessage, AuthError } = await import(`${root}/auth/authAdapter.ts`);
+
+const s = await devAuthAdapter.signIn(' Organizer@nascon.test ', 'Nascon@26');
+assert.equal(s.role, 'organizer'); assert.equal(s.source, 'dev-simulated');
+await assert.rejects(devAuthAdapter.signIn('organizer@nascon.test', 'wrong'), (e: any) => e.code === 'INVALID_CREDENTIALS');
+await assert.rejects(devAuthAdapter.signIn('nobody@x.test', 'Nascon@26'), AuthError);
+assert.equal(authErrorMessage(new AuthError('INVALID_CREDENTIALS', 'x')), 'Email or password is incorrect.');
+assert.deepEqual(quickActionsFor('viewer').map((a: any) => a.id), ['store']);
+assert.deepEqual(quickActionsFor('super_admin').map((a: any) => a.id), ['score', 'roster']);
+assert.equal(quickActionsFor('player').some((a: any) => a.id === 'score'), false);
+const now = new Date(2026, 9, 17, 12, 0);
+assert.equal(formatDayLabel(new Date(2026, 9, 17, 18).toISOString(), now), 'Today');
+assert.equal(formatDayLabel(new Date(2026, 9, 18, 9).toISOString(), now), 'Tomorrow');
+assert.equal(formatDayLabel(new Date(2026, 9, 20, 9).toISOString(), now), 'Tue, Oct 20');
+assert.equal(formatTime(new Date(2026, 9, 17, 7, 5).toISOString()), '07:05');
+assert.equal(clubColor('x'), clubColor('x')); assert.equal(clubColor('x', '#123456'), '#123456');
+console.log('logic tests passed');

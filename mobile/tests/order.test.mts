@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+(globalThis as any).__DEV__ = true;
+const r = new URL('../src', import.meta.url).pathname.replace(/\/$/, '');
+const { devStoreRepository: repo } = await import(`${r}/data/devStoreRepository.ts`);
+const { OrderError, orderErrorMessage } = await import(`${r}/data/storeRepository.ts`);
+const s: any = { role: 'viewer', userId: 'u1' };
+const labels = { 'var-jersey-001-M': { name: 'Jersey', variantLabel: 'M' }, 'var-jersey-001-L': { name: 'Jersey', variantLabel: 'L' } };
+const draft = (id: string, variantId: string, quantity: number, extra: any = {}) => ({ orderId: id, customerId: 'u1', items: [{ variantId, quantity }], discountCode: null, paymentToken: 'tok_success', ...extra });
+
+assert.equal((await repo.loadCatalog(s)).length, 5);
+await assert.rejects(repo.placeOrder(s, draft('o1', 'var-jersey-001-M', 1, { paymentToken: 'tok_declined' }), labels), (e: any) => e instanceof OrderError && e.code === 'PAYMENT_DECLINED');
+await assert.rejects(repo.placeOrder(s, draft('o1b', 'var-jersey-001-M', 1, { paymentToken: 'tok_capture_fail' }), labels), (e: any) => e.code === 'PAYMENT_CAPTURE_FAILED');
+assert.equal((await repo.loadProduct(s, 'prod-jersey-001')).variants[0].stock, 1, 'stock untouched after payment failures');
+const a = await repo.placeOrder(s, draft('o2', 'var-jersey-001-M', 1), labels);
+assert.equal(a.source, 'dev-simulated'); assert.equal(a.status, 'simulated'); assert.equal(a.totalMinor, 450000); assert.equal(a.lines[0].name, 'Jersey');
+assert.equal((await repo.loadProduct(s, 'prod-jersey-001')).variants[0].stock, 0);
+assert.deepEqual(await repo.placeOrder(s, draft('o2', 'var-jersey-001-M', 1), labels), a, 'identical replay returns stored result');
+await assert.rejects(repo.placeOrder(s, draft('o2', 'var-jersey-001-M', 2), labels), (e: any) => e.code === 'DUPLICATE_ORDER_ID');
+await assert.rejects(repo.placeOrder(s, draft('o3', 'var-jersey-001-M', 1), labels), (e: any) => e.code === 'OUT_OF_STOCK' && e.variantId === 'var-jersey-001-M');
+await assert.rejects(repo.placeOrder(s, draft('o3b', 'nope', 1), labels), (e: any) => e.code === 'VARIANT_NOT_FOUND');
+const d = await repo.placeOrder(s, draft('o4', 'var-jersey-001-L', 2, { discountCode: 'WELCOME10' }), labels);
+assert.equal(d.subtotalMinor, 900000); assert.equal(d.discountMinor, 90000); assert.equal(d.totalMinor, 810000);
+await assert.rejects(repo.placeOrder(s, draft('o5', 'var-jersey-001-L', 1, { discountCode: 'welcome10' }), labels), (e: any) => e.code === 'INVALID_DISCOUNT_CODE', 'code is exact-match');
+assert.match(orderErrorMessage(new OrderError('PAYMENT_DECLINED', 'x')), /declined/);
+console.log('order tests passed');
