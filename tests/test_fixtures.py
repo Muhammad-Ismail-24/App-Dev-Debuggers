@@ -2,6 +2,7 @@ from collections import Counter
 from copy import deepcopy
 from itertools import combinations
 from time import perf_counter
+from random import Random
 
 import pytest
 from fastapi.testclient import TestClient
@@ -266,3 +267,93 @@ def test_live_fixture_contract(live_api):
         body = dict(format=format_, teams=[f"t{i}" for i in range(1, n+1)], params={})
         r = live_api.post("/audit/v1/fixtures", json=body)
         assert r.status_code == 200 and r.json() == generate_fixtures(body)
+
+
+@pytest.mark.parametrize("format_,params", [
+    ("single_elim", {"bracket_reset": "ignored", "unknown": {"anything": 1}}),
+    ("double_elim", {"third_place_match": "ignored", "unknown": 1}),
+    ("round_robin", {"results": "ignored"}),
+    ("swiss", {"legs": "ignored"}),
+])
+def test_unknown_fields_are_ignored_per_format(format_, params):
+    assert generate(format_, 5, **params) == generate(format_, 5)
+
+
+@pytest.mark.parametrize("n", list(range(3, 18)) + [31, 32, 63, 64, 127, 128])
+def test_double_elimination_loss_accounting(n):
+    """Every eliminated team loses twice; the champion has at most one loss."""
+    rng = Random(1000+n)
+    supplied, losses = [], Counter()
+    for _ in range(40):
+        bracket = generate("double_elim", n, results=list(reversed(supplied)))
+        matches = all_matches(bracket)
+        playable = [m for m in matches if m["home"] and m["away"] and not m["winner"]
+                    and (m["match_id"] != "GF2" or m["required"] is True)]
+        if not playable:
+            break
+        for m in playable:
+            assert m["home"] != m["away"]
+            winner = rng.choice([m["home"], m["away"]])
+            loser = m["away"] if winner == m["home"] else m["home"]
+            assert losses[winner] < 2 and losses[loser] < 2
+            losses[loser] += 1
+            supplied.append(dict(match_id=m["match_id"], winner=winner))
+    else:
+        pytest.fail("Bracket failed to reach a terminal state")
+    finals = bracket["grand_final"]
+    champion = finals[1]["winner"] if finals[1]["required"] else finals[0]["winner"]
+    assert champion is not None and losses[champion] <= 1
+    assert all(losses[f"t{i}"] == 2 for i in range(1, n+1) if f"t{i}" != champion)
+    assert len(supplied) == 2*n-2 + int(finals[1]["required"])
+    by_id = {m["match_id"]: m for m in matches}
+    for m in matches:
+        for outcome in ("winner", "loser"):
+            if m[outcome+"_to"] and m["winner"] is not None:
+                destination = m[outcome+"_to"]
+                assert by_id[destination["match_id"]][destination["slot"]] == m[outcome]
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_swiss_arbitrary_history_against_independent_bye_oracle(seed):
+    """Audit caller-supplied histories independently of our own pairing output."""
+    rng = Random(seed)
+    teams = [f"t{i}" for i in range(7)]
+    history, scores, opponents, previous_byes = [], dict.fromkeys(teams, 0), {t: [] for t in teams}, set()
+    for round_number in range(1, 5):
+        shuffled = teams.copy()
+        rng.shuffle(shuffled)
+        bye = shuffled.pop()
+        previous_byes.add(bye)
+        scores[bye] += 1
+        matches = []
+        for a, b in zip(shuffled[::2], shuffled[1::2]):
+            result = rng.choice(["home", "away", "draw"])
+            matches.append(dict(home=a, away=b, result=result))
+            scores[a] += 1 if result == "home" else .5 if result == "draw" else 0
+            scores[b] += 1 if result == "away" else .5 if result == "draw" else 0
+            opponents[a].append(b)
+            opponents[b].append(a)
+        history.append(dict(round=round_number, bye=bye, matches=matches))
+    forbidden = {frozenset((a, b)) for a in teams for b in opponents[a]}
+    candidates = sorted((t for t in teams if t not in previous_byes), key=lambda t: (scores[t], -teams.index(t)))
+    valid = [(b, exhaustive_cost([t for t in teams if t != b], scores, forbidden)) for b in candidates]
+    valid = [(b, cost) for b, cost in valid if cost != float("inf")]
+    body = dict(format="swiss", teams=teams, params=dict(round=5, total_rounds=6, history=history))
+    if not valid:
+        with pytest.raises(NoValidPairing):
+            generate_fixtures(body)
+        return
+    actual = generate_fixtures(body)
+    assert actual["bye"] == valid[0][0]
+    assert sum(abs(scores[p["home"]]-scores[p["away"]]) for p in actual["pairings"]) == valid[0][1]
+    expected_order = sorted(teams, key=lambda t: (-scores[t], -sum(scores[o] for o in opponents[t]), teams.index(t)))
+    assert [r["team_id"] for r in actual["standings"]] == expected_order
+
+
+@pytest.mark.parametrize("history", [
+    [dict(round=1, bye=None, matches=[dict(home="t1", away="t2", result="draw")])],
+    [dict(round=1, bye="t1", matches=[dict(home="t2", away="t3", result="draw"), dict(home="t4", away="t5", result="draw")])],
+])
+def test_history_must_cover_field_with_correct_bye_parity(history):
+    with pytest.raises(ValidationError):
+        generate("swiss", 4, round=2, history=history)

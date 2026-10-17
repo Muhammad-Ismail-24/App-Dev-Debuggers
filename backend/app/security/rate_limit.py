@@ -7,6 +7,10 @@ from time import monotonic
 from uuid import uuid4
 
 from starlette.responses import JSONResponse
+from starlette.requests import Request
+
+from app.security.rbac import authorize_probe
+from fastapi import HTTPException
 
 
 class MemoryWindowLimiter:
@@ -63,6 +67,14 @@ class SecurityMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         path = scope["path"]
+        if path.startswith("/audit/v1/rbac/"):
+            # The probe contract puts the complete role/resource policy ahead
+            # of all other checks, including the global body-size guard.
+            try:
+                authorize_probe(Request(scope))
+            except HTTPException as exc:
+                response = JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+                return await response(scope, receive, send)
         if path.startswith("/api/v1/"):
             # Do not trust client-supplied X-Forwarded-For. Configure trusted
             # proxy handling in Uvicorn if the deployment has a reverse proxy.

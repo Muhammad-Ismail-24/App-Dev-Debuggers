@@ -1,5 +1,54 @@
 """Section 5.13 policy-as-code over trusted identity/resource records."""
+import re
+from fastapi import HTTPException
+
 from app.schemas.rbac import Principal, Resource
+from app.security.jwt import InvalidToken
+
+
+def authenticate(request):
+    """Validate the bearer before inspecting a probe's body or resource."""
+    headers = request.headers.getlist("authorization")
+    parts = headers[0].split() if len(headers) == 1 else []
+    principal = None
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        try:
+            subject = request.app.state.jwt_service.verify(parts[1])
+            principal = request.app.state.authorization_source.get_principal(subject)
+        except InvalidToken:
+            pass
+    if principal is None or principal.role not in {"super_admin", "league_organizer", "club_manager", "player", "viewer"}:
+        raise HTTPException(401, detail=dict(code="UNAUTHENTICATED", message="A valid bearer token is required", details={}),
+                            headers={"WWW-Authenticate": "Bearer"})
+    return principal
+
+
+PROBES = (
+    ("POST", r"/audit/v1/rbac/tenants", "create_tenant", None),
+    ("POST", r"/audit/v1/rbac/leagues/([^/]+)/fixtures", "manage_fixtures", "league"),
+    ("POST", r"/audit/v1/rbac/clubs/([^/]+)/roster", "manage_roster", "club"),
+    ("POST", r"/audit/v1/rbac/clubs/([^/]+)/products", "manage_products", "club"),
+    ("PATCH", r"/audit/v1/rbac/players/([^/]+)", "edit_player", "player"),
+    ("GET", r"/audit/v1/rbac/clubs/([^/]+)", "read_club", "club"),
+    ("GET", r"/audit/v1/rbac/platform/config", "platform_config", None),
+)
+
+
+def authorize(request, action, kind=None, resource_id=None):
+    principal = authenticate(request)
+    resource = request.app.state.authorization_source.get_resource(kind, resource_id) if kind else None
+    if not is_allowed(principal, action, resource):
+        raise HTTPException(403, detail=dict(code="FORBIDDEN", message="Access denied", details={}))
+    return {"authorized": True}
+
+
+def authorize_probe(request):
+    """Run a recognized probe's complete policy before reading its body."""
+    for method, pattern, action, kind in PROBES:
+        matched = re.fullmatch(pattern, request.url.path)
+        if request.method == method and matched:
+            return authorize(request, action, kind, matched.group(1) if kind else None)
+    return None
 
 
 def is_allowed(principal: Principal, action: str, resource: Resource | None = None) -> bool:

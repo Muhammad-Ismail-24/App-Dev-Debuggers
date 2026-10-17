@@ -45,8 +45,12 @@ class Result(ContractModel):
     winner: Identifier
 
 
-class EliminationParams(ContractModel):
+class SingleEliminationParams(ContractModel):
     third_place_match: bool = False
+    results: list[Result] = Field(default_factory=list)
+
+
+class DoubleEliminationParams(ContractModel):
     bracket_reset: bool = True
     results: list[Result] = Field(default_factory=list)
 
@@ -83,7 +87,8 @@ class FixturesRequest(ContractModel):
                 if bool(n % 2) != (h.bye is not None):
                     raise ValueError("params.history.bye: inconsistent with team count")
         else:
-            p = EliminationParams.model_validate(self.params)
+            model = SingleEliminationParams if self.format == "single_elim" else DoubleEliminationParams
+            p = model.model_validate(self.params)
             if len({r.match_id for r in p.results}) != len(p.results):
                 raise ValueError("params.results: duplicate match result")
         self.params = p.model_dump()

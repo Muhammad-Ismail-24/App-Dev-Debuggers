@@ -24,14 +24,14 @@ implementation/test to cite; it is not a reference to an invented file.
 | FR-1.1 | Configurable sports, append-only scoring and compensation | — (Ismail) | `tests/test_sports.py::test_mystery_sport_config`; `tests/test_events.py::test_data_driven_models_and_limits`; `tests/test_events.py::test_append_only_compensation_replay_and_signatures` | Live pending; authoritative scoring and HMAC service absent |
 | FR-1.2 | League, season, division, hybrid configuration | — (Ismail) | `tests/test_standings.py::test_live_standings_recalculate_after_compensation` exercises league registration | Live pending; no test/implementation for divisions, promotion or hybrid administration |
 | FR-1.3 | Four fixture formats | `backend/app/services/fixtures.py`; `backend/app/schemas/fixtures.py`; `backend/app/api/routes/fixtures.py` | `tests/test_fixtures.py::test_round_robin_invariants`; `test_withdrawals_preserve_fixtures`; `test_single_elimination_seeding_and_byes`; `test_advancement_and_third_place_results_unordered`; `test_swiss_optimality_against_exhaustive_oracle`; `test_http_infeasible_pairing_and_invalid_winner`; `test_double_elimination_graph`; `test_double_elimination_play_through` | Unit verified for section 5.7; production registration pending. Manual rescheduling, venue/player/rest conflicts, postponed/abandoned/cancelled workflow and realtime notifications remain unimplemented |
-| FR-1.4 | Standings and qualification | `backend/app/services/standings.py`; `backend/app/schemas/standings.py`; `backend/app/api/routes/standings.py` | `tests/test_standings.py::test_three_way_mini_league`; `test_restart_after_split_uses_smaller_h2h_group`; `test_nrr_balls_all_out_and_mini_league`; `test_lots_exact_empty_and_no_mutation`; `test_incomplete_and_undecided_are_remaining`; `test_route_fetches_fresh_authoritative_projections`; `test_live_standings_recalculate_after_compensation` | Unit verified; real score projection adapter and correction flow live pending |
+| FR-1.4 | Standings and qualification | `backend/app/services/standings.py`; `backend/app/schemas/standings.py`; `backend/app/api/routes/standings.py` | `tests/test_standings.py::test_three_way_mini_league`; `test_restart_after_split_uses_smaller_h2h_group`; `test_nrr_balls_all_out_and_mini_league`; `test_nrr_uses_aggregate_overs_not_average_match_rates`; `test_h2h_subset_outweighs_overall_differential`; `test_lots_exact_empty_and_no_mutation`; `test_incomplete_and_undecided_are_remaining`; `test_route_fetches_fresh_authoritative_projections`; `test_live_standings_recalculate_after_compensation` | Unit verified; real score projection adapter and correction flow live pending |
 | FR-2.1 | Club profiles and tenant isolation | `backend/app/security/rbac.py` (authorization only) | `tests/test_rbac.py::test_permission_matrix`; `test_live_permission_matrix` | Policy unit verified; profile persistence, white-label UI and realtime are not implemented here |
 | FR-2.2 | Roster, transfers, loans and immutable history | — (Ismail) | `tests/test_roster.py::test_last_day_transfer_and_immutable_replay`; `test_roster_rejections_leave_no_audit`; `test_loan_auto_return_once` | Live pending; no claimed backend coverage |
 | FR-2.3 | Store, payments, receipts and order events | — (Ismail) | `tests/test_checkout.py::test_checkout_receipt_replay_and_duplicate`; `test_payment_failures_release_stock`; `test_checkout_validation_precedence` | Live pending; catalogue, scheduled prices, order queue and product pinning not verified |
 | FR-5.1 | Five-role RBAC and ownership | `backend/app/security/jwt.py`; `backend/app/security/rbac.py`; `backend/app/schemas/rbac.py`; `backend/app/api/routes/rbac.py` | `tests/test_rbac.py::test_permission_matrix`; `test_matrix_issues_real_tokens_and_seed_context`; `test_authorization_precedes_body_and_resource_lookup` | Unit verified; seeded identity/resource adapter and shared startup configuration pending |
 | NFR-3 | Twenty buyers, one final unit | — (Ismail checkout) | `tests/test_checkout.py::test_twenty_buyers_final_unit`; `tests/load/checkout_concurrency.js` | Not run against a live service; no concurrency pass claimed |
 | NFR-4 | Persistent mobile queue and synchronization | — (Ismail and Zaheen) | `tests/test_offline_sync.py::test_offline_chronology_rebase_future_and_duplicates`; `test_offline_bad_envelope` | Live pending; native offline/force-close/relaunch demonstration untested |
-| NFR-5 | JWT, RBAC, rate limiting, validation, body limits, secure mobile tokens | `backend/app/security/`; `backend/app/api/routes/ping.py`; strict fixture schema | `tests/test_rbac.py::test_invalid_auth`; `test_window_expiry_is_rolling_and_ip_isolation`; `test_limiter_atomic_across_threads`; `test_large_and_chunked_bodies`; `test_actual_redis_limiter_when_configured`; `test_live_rate_limit`; `tests/test_sports.py::test_sports_validation` | Local security tests verified; Redis Lua and production middleware integration pending; iOS Keychain and broader OWASP review not verified |
+| NFR-5 | JWT, RBAC, rate limiting, validation, body limits, secure mobile tokens | `backend/app/security/`; `backend/app/api/routes/ping.py`; strict fixture schema | `tests/test_rbac.py::test_invalid_auth`; `test_window_expiry_is_rolling_and_ip_isolation`; `test_limiter_atomic_across_threads`; `test_probe_auth_precedes_oversize_body`; `test_large_and_chunked_bodies`; `test_actual_redis_limiter_when_configured`; `test_live_rate_limit`; `tests/test_sports.py::test_sports_validation` | Local security and actual Redis Lua tests verified; production middleware integration and iOS Keychain remain unverified |
 | NFR-7 | Single-command Docker startup and readiness | — (Ismail) | `tests/test_health_reset.py::test_readiness_and_repeatable_reset` | Not verified: no Compose/Dockerfile/backend entrypoint in cloned baseline; local Docker Linux engine unavailable |
 
 ## Exact handoff to Ismail
@@ -95,8 +95,8 @@ Run from the repository root with dependencies already installed:
 ```sh
 ./run_tests.sh -q
 # These live tests reset graded data. Use a dedicated integration instance.
-NASCON_API_URL=http://localhost:8080 ./run_tests.sh -q
-NASCON_REDIS_URL=redis://localhost:6379/0 ./run_tests.sh -q
+NASCON_API_URL=http://localhost:8080 DAY1_SALT=<matching-salt> ./run_tests.sh --require-live -q
+NASCON_REDIS_URL=redis://localhost:6379/0 ./run_tests.sh --require-redis -q
 # Supply DAY1_SALT through the environment to verify the live HMACs.
 k6 run -e NASCON_API_URL=http://localhost:8080 tests/load/checkout_concurrency.js
 ```
@@ -112,11 +112,17 @@ including unexecuted modules under `backend/app`. Area totals include their
 service/schema/router files, and all security/ping files for RBAC. Absent
 scoring/store/roster implementations report **0.0**, never fabricated coverage.
 External HTTP testing alone cannot measure coverage inside a separate server.
+On a clean machine with network access, `./run_tests.sh --install-deps -q`
+installs the pinned test and Sufiyan-module dependencies first. For an actual
+integration run, `--require-live` and `--require-redis` turn missing services
+into failures; the default local run explicitly skips those external checks.
 
 Verified local runtime: Python 3.14 (installed on this laptop), FastAPI 0.141.1,
 Pydantic 2.13.4, PyJWT 2.13.0, NetworkX 3.7, pytest 9.1.1, httpx 0.28.1,
-coverage 7.16.2. Target Python 3.12/Linux remains to be checked in Ismail's Docker
-image. Latest measured results and area percentages are recorded below;
+coverage 7.16.2. The complete suite also ran on Linux/Python 3.12 in the cached
+`python:3.12-slim` image, with the same Redis 7 test container. Ismail's own
+Docker image remains unavailable. Latest measured results and area percentages
+are recorded below for Python 3.12;
 skipped tests are never marked passed.
 
 ## Contract details requiring clarification
@@ -145,16 +151,17 @@ skipped tests are never marked passed.
 
 ## Latest local verification
 
-Executed `run_tests.sh -q` through Git Bash using the installed Python interpreter:
-**260 passed, 33 skipped, 0 failed**, pytest time **4.49 seconds**, runner exit 0.
-The skips are **32 live HTTP tests and one actual-Redis test**. The unit harness
+Executed `run_tests.sh --install-deps --require-redis -q` under Linux/Python 3.12:
+**303 passed, 32 skipped, 0 failed** in 11.27 seconds. A local Python 3.14 run
+also yielded 303 passed and 32 skipped in 5.51 seconds. The remaining skips are
+all live HTTP tests. The unit harness
 does not include a fake checkout/scoring/roster/offline backend.
 
 | Area | Covered / executable lines | Measured line coverage |
 |---|---:|---:|
-| Fixtures (service, schema, router) | 268 / 270 | 99.26% |
+| Fixtures (service, schema, router) | 281 / 282 | 99.65% |
 | Standings (service, adapter protocol, router) | 117 / 118 | 99.15% |
-| RBAC/security (JWT, policy, middleware, schema, routers, ping) | 179 / 188 | 95.21% |
+| RBAC/security (JWT, policy, middleware, schema, routers, ping) | 204 / 211 | 96.68% |
 | Scoring | No implementation present | 0.0% |
 | Store | No implementation present | 0.0% |
 | Roster | No implementation present | 0.0% |
@@ -162,11 +169,17 @@ does not include a fake checkout/scoring/roster/offline backend.
 Additional performance probe: six successive Swiss rounds at each of 31, 32, 63
 and 64 teams with seeded mixed win/draw results completed in **1.01 seconds total**
 on this laptop. This is a local timing observation, not a grading-machine promise.
-Both published Appendix A hash vectors were independently matched.
+Both published Appendix A hash vectors were independently matched. The actual
+Redis Lua check verified 100 accepted and 50 limited concurrent calls across
+two limiter instances, another IP's independent allowance, and reopening after
+window expiry. The k6 checkout script parsed successfully with the official
+cached k6 0.54.0 image; it was not run against a checkout service.
 
-Remote HEAD was rechecked and remains the original scaffold commit. A read-only
-request to `http://127.0.0.1:8080/health` timed out. Docker reports no running Linux
-engine. Live backend, Redis Lua, k6 execution, Docker startup and native iOS
-judging flows remain **unverified**. Production handlers/adapters/registration
+Remote `main` was rechecked and remains the original scaffold commit. Ismail
+confirmed through Sufiyan that his backend still needs implementation; no live
+service or adapters are available. A read-only request to
+`http://127.0.0.1:8080/health` timed out. Live backend, checkout burst, Docker
+application startup and native iOS judging flows remain **unverified**.
+Production handlers/adapters/registration
 remain explicit integration requirements, so these results do not establish
 autograder readiness.

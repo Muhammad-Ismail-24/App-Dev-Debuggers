@@ -3,6 +3,12 @@ set -eu
 cd "$(dirname "$0")"
 export PYTHONDONTWRITEBYTECODE=1
 PYTHON="${PYTHON:-python3}"
+if [ "${1:-}" = "--install-deps" ]; then
+  "$PYTHON" -m pip install 'fastapi==0.141.1' 'pydantic==2.13.4' 'PyJWT==2.13.0' \
+    'networkx==3.7' 'redis==6.4.0' 'pytest==9.1.1' 'httpx==0.28.1' \
+    'coverage==7.16.2' 'pypdf==6.21.0'
+  shift
+fi
 export PYTHONPATH="$("$PYTHON" -c 'import os; print(os.path.join(os.getcwd(), "backend") + os.pathsep + os.environ.get("PYTHONPATH", ""))')"
 REPORT_DIR="$(mktemp -d)"
 trap 'rm -f -- "$REPORT_DIR/.coverage" "$REPORT_DIR/coverage.json"; rmdir -- "$REPORT_DIR"' EXIT

@@ -19,6 +19,10 @@ edges cyclically on odd fields and alternate the extra team's edges on even
 fields. Reverse every pair in leg two. Apply withdrawal status after generation.
 **Consequences:** Balance is at most one within each leg, and forfeits/voids
 cannot remove fixtures or change byes. Tests cover every supported team count.
+On an odd field, cyclic orientation gives each team `(n-1)/2` home and away
+games. On an even field, the `n-1` rotating teams have equal home/away counts
+against each other, and the remaining opponent changes the difference by one.
+The second leg reverses every ordered pair.
 
 ## ADR-003: Globally optimal Swiss matching
 
@@ -31,6 +35,10 @@ general weighted blossom solver for minimum-weight maximum-cardinality matching.
 matching is explicitly required; eligible bye candidates are tried in mandated
 order. Exhaustive small-field oracles independently check optimality. NetworkX
 must be included in Ismail's image.
+The solver minimizes `sum(abs(2*score_a - 2*score_b))`, an integer objective
+equivalent to the required point-gap sum. A full matching proves every active
+team can play once without a rematch; otherwise the next eligible bye is tried.
+The tests compare the selected cost with exhaustive enumeration on small fields.
 
 ## ADR-004: Explicit elimination routing graph
 
@@ -40,6 +48,11 @@ then propagate only when both input slots are resolved. Distinguish unresolved
 slots from known missing participants. **Consequences:** Byes propagate through
 the losers bracket, impossible results are rejected, and GF2 is conditional.
 Graph and complete tournament simulations verify routing and terminal behavior.
+For a power-of-two bracket of size `B`, the graph has `B-1` winners matches,
+`B-2` losers matches and one guaranteed grand final. Actual byes do not count
+as played matches. A full tournament with `n` entrants plays `2n-2` matches,
+plus one if the LB champion wins GF1 and a reset is enabled. The full-play
+tests independently count every team's losses.
 
 ## ADR-005: Fresh standings over one authoritative scorer
 
@@ -50,6 +63,10 @@ split and use SHA256 lots. **Consequences:** No second event engine or mutable
 standings counters exist. Ismail must provide defaults, snapshot-consistent reads,
 and projection callbacks. Zero-ball and `resolved_by` interpretations are exposed
 in `TRACEABILITY.md` rather than hidden.
+For an innings sport, net run rate is `total_runs_for / total_overs_faced -
+total_runs_against / total_overs_bowled`; it is not an average of per-match
+rates. All-out innings use the configured full overs. Qualification uses the
+specified points-only bounds: `max(T) = points(T) + win_points * remaining(T)`.
 
 ## ADR-006: Signed identity and repository-backed authorization
 
@@ -69,7 +86,8 @@ check/add using Redis time, applied only to `/api/v1/*`; retain a lock-protected
 memory implementation for isolated tests. Enforce audit POST body size while
 reading chunks. **Consequences:** Ismail must inject the async Redis connection
 and install middleware once. Redis failures are not silently bypassed. The Lua
-path still needs an actual Redis run; memory tests do not prove it.
+path was exercised against a temporary Redis 7 container; production app
+registration and deployment remain for Ismail's integration.
 
 ## ADR-008: Honest layered verification and unchanged team ownership
 

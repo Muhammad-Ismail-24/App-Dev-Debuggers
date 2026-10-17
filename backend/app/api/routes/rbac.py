@@ -1,34 +1,9 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from app.schemas.rbac import ROLES
-from app.security.jwt import InvalidToken
-from app.security.rbac import is_allowed
+from app.security.rbac import authorize
 
 router = APIRouter()
-
-
-def authenticate(request):
-    headers = request.headers.getlist("authorization")
-    parts = headers[0].split() if len(headers) == 1 else []
-    principal = None
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        try:
-            subject = request.app.state.jwt_service.verify(parts[1])
-            principal = request.app.state.authorization_source.get_principal(subject)
-        except InvalidToken:
-            pass
-    if principal is None or principal.role not in ROLES:
-        raise HTTPException(401, detail=dict(code="UNAUTHENTICATED", message="A valid bearer token is required", details={}),
-                            headers={"WWW-Authenticate": "Bearer"})
-    return principal
-
-
-def authorize(request, action, kind=None, resource_id=None):
-    principal = authenticate(request)  # Before resource lookup or body parsing.
-    resource = request.app.state.authorization_source.get_resource(kind, resource_id) if kind else None
-    if not is_allowed(principal, action, resource):
-        raise HTTPException(403, detail=dict(code="FORBIDDEN", message="Access denied", details={}))
-    return {"authorized": True}
 
 
 @router.post("/audit/v1/rbac-matrix")

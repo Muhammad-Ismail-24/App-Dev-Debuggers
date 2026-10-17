@@ -71,6 +71,26 @@ def test_nrr_balls_all_out_and_mini_league():
     assert r["table"][0]["diff"] == -0.429
 
 
+def test_nrr_uses_aggregate_overs_not_average_match_rates():
+    r = table([match("ab", "a", "b", 100, 90, balls=(60, 60)),
+               match("ac", "a", "c", 100, 50, balls=(120, 60))], model="innings")
+    a = next(row for row in r["table"] if row["team_id"] == "a")
+    # 200 runs / 30 overs - 140 conceded / 20 overs = -0.333.
+    assert a["scored"] == 200 and a["conceded"] == 140 and a["diff"] == -0.333
+    assert r["h2h"]["a"]["b"] == dict(played=1, points=3, scored=100, conceded=90)
+
+
+def test_h2h_subset_outweighs_overall_differential():
+    # a and b have three points apiece. b's large overall differential must
+    # lose to a's direct win inside that two-team mini-league.
+    matches = [match("ab", "a", "b", 1, 0), match("bc", "b", "c", 100, 0),
+               match("ca", "c", "a", 1, 0), match("cd", "c", "d", 1, 0)]
+    r = table(matches, teams=("a", "b", "c", "d"))
+    assert [row["team_id"] for row in r["table"]] == ["c", "a", "b", "d"]
+    assert r["table"][1]["resolved_by"] == "h2h_points"
+    assert r["table"][2]["diff"] > r["table"][1]["diff"]
+
+
 def test_lots_exact_empty_and_no_mutation():
     assert lots_key(42, "lg-1", "t1") == "0613316991ce0ac31e88d6003e3ff4d5e21bb072ac5f81b42c0cdc6598453293"
     r = table([], teams=("t1", "t2", "t3"), tie_break_order=["draw_lots", "scored"])

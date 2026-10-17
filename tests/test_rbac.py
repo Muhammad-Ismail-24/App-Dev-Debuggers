@@ -177,20 +177,40 @@ def test_large_and_chunked_bodies(client):
         assert r.status_code == 413 and r.json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
 
 
-def test_actual_redis_limiter_when_configured():
+def test_probe_auth_precedes_oversize_body(client):
+    path = "/audit/v1/rbac/tenants"
+    oversized = b"x"*(1024*1024+1)
+    response = client.post(path, content=oversized)
+    assert response.status_code == 401 and response.json()["error"]["code"] == "UNAUTHENTICATED"
+    allowed = {"Authorization": "Bearer " + client.app.state.jwt_service.issue("super_admin")}
+    response = client.post(path, headers=allowed, content=oversized)
+    assert response.status_code == 413 and response.json()["error"]["code"] == "PAYLOAD_TOO_LARGE"
+    denied = {"Authorization": "Bearer " + client.app.state.jwt_service.issue("viewer")}
+    response = client.post(path, headers=denied, content=oversized)
+    assert response.status_code == 403 and response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_actual_redis_limiter_when_configured(request):
     import os
     if not os.getenv("NASCON_REDIS_URL"):
+        if request.config.getoption("--require-redis"):
+            pytest.fail("NASCON_REDIS_URL is required for Redis integration")
         pytest.skip("Set NASCON_REDIS_URL to verify atomic Lua against actual Redis")
     from redis.asyncio import Redis
     from uuid import uuid4
 
     async def run():
         redis = Redis.from_url(os.environ["NASCON_REDIS_URL"])
-        limiter = RedisWindowLimiter(redis, prefix=f"nascon:test:{uuid4()}:")
+        prefix = f"nascon:test:{uuid4()}:"
+        limiter = RedisWindowLimiter(redis, window=.5, prefix=prefix)
+        second_worker = RedisWindowLimiter(redis, window=.5, prefix=prefix)
         try:
-            results = await asyncio.gather(*(limiter.check("a") for _ in range(150)))
+            results = await asyncio.gather(*((limiter if i % 2 else second_worker).check("a") for i in range(150)))
             assert results.count(0) == 100
             assert sum(r > 0 for r in results) == 50
+            assert await second_worker.check("b") == 0
+            await asyncio.sleep(.6)
+            assert await limiter.check("a") == 0
         finally:
             await redis.aclose()
     asyncio.run(run())

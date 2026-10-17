@@ -16,6 +16,13 @@ from starlette.exceptions import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 
+def pytest_addoption(parser):
+    parser.addoption("--require-live", action="store_true",
+                     help="Fail rather than skip if NASCON_API_URL or DAY1_SALT is unavailable")
+    parser.addoption("--require-redis", action="store_true",
+                     help="Fail rather than skip if NASCON_REDIS_URL is unavailable")
+
+
 def contract_test_app(*routers):
     app = FastAPI()
 
@@ -35,10 +42,14 @@ def contract_test_app(*routers):
 
 
 @pytest.fixture
-def live_api():
+def live_api(request):
     url = os.environ.get("NASCON_API_URL")
     if not url:
+        if request.config.getoption("--require-live"):
+            pytest.fail("NASCON_API_URL is required for live integration")
         pytest.skip("Live backend unavailable: set NASCON_API_URL (tests reset its graded data)")
+    if request.config.getoption("--require-live") and "DAY1_SALT" not in os.environ:
+        pytest.fail("DAY1_SALT must match the running API for live signature verification")
     with httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
         response = client.post("/audit/v1/reset", json={})
         assert response.status_code == 200, response.text
