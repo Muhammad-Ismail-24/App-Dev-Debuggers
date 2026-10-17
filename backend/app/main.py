@@ -24,6 +24,9 @@ from app.services.realtime import (
     hub as realtime_hub,
     on_match_event_committed,
 )
+from app.security.jwt import JwtService
+from app.security.rate_limit import MemoryWindowLimiter, RedisWindowLimiter, SecurityMiddleware
+from app.security.sources import DbAuthorizationSource, DbStandingsSource, ResilientLimiter
 from app.services.scoring import register_match_listener
 
 logger = logging.getLogger("app.main")
@@ -158,6 +161,16 @@ register_exception_handlers(app)
 # so it runs first on inbound requests).
 # ---------------------------------------------------------------------------
 
+# 0. Security: RBAC probe pre-authorization, /api/v1 rolling-window rate limit (Redis, in-process fallback).
+_limiter = MemoryWindowLimiter()
+try:
+    import redis.asyncio as _aioredis
+
+    _limiter = ResilientLimiter(RedisWindowLimiter(_aioredis.from_url(get_settings().REDIS_URL)), _limiter)
+except Exception:  # noqa: BLE001
+    logger.warning("redis client unavailable; using in-process rate limiter")
+app.add_middleware(SecurityMiddleware, limiter=_limiter)
+
 # 1. Body size limiter — rejects oversized POST/PUT/PATCH before route dispatch.
 app.add_middleware(BodySizeLimitMiddleware)
 
@@ -174,4 +187,9 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
+# Trusted sources used by Sufiyan's standings and RBAC routes (see app/security/sources.py).
+app.state.standings_source = DbStandingsSource()
+app.state.authorization_source = DbAuthorizationSource()
+app.state.jwt_service = JwtService(get_settings().JWT_SECRET)
+
 app.include_router(api_router)

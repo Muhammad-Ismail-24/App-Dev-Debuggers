@@ -11,14 +11,18 @@ from fastapi import APIRouter
 from app.api.routes import (
     checkout,
     events,
+    fixtures,
     health,
     inventory,
     leagues,
     offline_sync,
+    ping,
+    rbac,
     realtime,
     reset,
     roster,
     sports,
+    standings,
 )
 
 api_router = APIRouter()
@@ -29,14 +33,14 @@ api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(reset.router)
 api_router.include_router(sports.router)
-# api_router.include_router(fixtures.router)   # Sufiyan
+api_router.include_router(fixtures.router)
 api_router.include_router(leagues.router)
 api_router.include_router(events.router)
-# api_router.include_router(standings.router)  # Sufiyan
+api_router.include_router(standings.router)
 api_router.include_router(roster.router)
 api_router.include_router(checkout.router)
 api_router.include_router(inventory.router)
-# api_router.include_router(rbac.router)       # Sufiyan
-# api_router.include_router(ping.router)       # Sufiyan
+api_router.include_router(rbac.router)
+api_router.include_router(ping.router)
 api_router.include_router(offline_sync.router)
 api_router.include_router(realtime.router)
