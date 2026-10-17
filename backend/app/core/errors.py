@@ -150,6 +150,8 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
 async def _handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Map Starlette HTTP exceptions to the standard error body."""
     status = exc.status_code
+    if isinstance(exc.detail, dict) and "code" in exc.detail:
+        return JSONResponse(status_code=status, content={"error": exc.detail})
 
     if status == 404:
         code = "NOT_FOUND"

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import health, reset, sports
+from app.api.routes import health, leagues, reset, sports
 
 api_router = APIRouter()
 
@@ -12,7 +12,7 @@ api_router.include_router(health.router)
 api_router.include_router(reset.router)
 api_router.include_router(sports.router)
 # api_router.include_router(fixtures.router)
-# api_router.include_router(leagues.router)
+api_router.include_router(leagues.router)
 # api_router.include_router(events.router)
 # api_router.include_router(standings.router)
 # api_router.include_router(roster.router)
