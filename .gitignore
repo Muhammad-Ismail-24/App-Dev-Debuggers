@@ -1,0 +1,29 @@
+# Environment variables (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Python bytecode & cache
+__pycache__/
+*.pyc
+.venv/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+allure-results/
+allure-report/
+
+# Node / React Native build artifacts
+node_modules/
+.expo/
+dist/
+
+# iOS native build artifacts & pods (Do NOT ignore mobile/ios/ native config)
+mobile/ios/Pods/
+mobile/ios/build/
+DerivedData/
+
+# OS metadata
+.DS_Store
